@@ -28,7 +28,7 @@ jobs:
 
     - name: Run script
       env:
-        TELEGRAM_BOT_TOKEN: ${{ 7402328372:AAEeOZBlHv1BGKKng-KnupD3h_bvyOhLzug }}
-        CHAT_ID: ${{ -1002117465854 }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID }}
       run: |
         python algo.py
