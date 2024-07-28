@@ -3,6 +3,11 @@ import pandas as pd
 import numpy as np
 import time
 from telegram import Bot
+import os
+
+# Получение токена и chat_id из переменных окружения
+bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+chat_id = os.getenv('CHAT_ID')
 
 # Функция для получения последних N свечей
 def kline(symb, tf, N):
@@ -137,10 +142,6 @@ initial_investment = 1  # инвестиция в 1 доллар
 price_drop_threshold = params['priceDropThreshold'] / 100  # Порог для стоп-лосса
 averaging_drop = params['averagingDrop']  # Порог для усреднения
 
-# Telegram параметры
-bot_token = '7402328372:AAEeOZBlHv1BGKKng-KnupD3h_bvyOhLzug'
-chat_id = '-1002117465854'
-
 # Выполнение торговых сигналов в реальном времени
 trades = []
 last_buy_price = np.nan
@@ -163,63 +164,55 @@ while True:
         data['adjustedSupport'] = data['pivot_low'].shift(40) - params['offset']
         data['buySignal'] = (data['Close'].shift(1) < data['adjustedSupport'].shift(1)) & (data['Close'] > data['adjustedSupport'])
         data['sellSignal'] = (data['Close'].shift(1) > data['adjustedResistance'].shift(1)) & (data['Close'] < data['adjustedResistance'])
-        
-        # Проверка сигнала на покупку
-        if data['buySignal'].iloc[-1] and not trade_open and buy_signal_count < 3:
-            last_buy_price = data['Close'].iloc[-1]
-            avg_price = last_buy_price
-            contracts = initial_investment / last_buy_price  # Рассчитываем количество контрактов на 1 доллар
-            buy_signal_count += 1
-            can_sell_signal = True
-            trades.append({'type': 'buy', 'price': last_buy_price, 'timestamp': data.index[-1], 'contracts': contracts})
-            trade_open = True
-            buy_message = f"Пара: {symbol}\nТаймфрейм: {timeframe}m\nСигнал: long\nПлечо: {leverage}x"
-            send_telegram_message(bot_token, chat_id, buy_message)
-            print(f"Сигнал на покупку: {data.index[-1]} Цена: {data['Close'].iloc[-1]} Контракты: {contracts}")
 
-                # Проверка сигнала на продажу
-        if data['sellSignal'].iloc[-1] and can_sell_signal:
-            sell_price = data['Close'].iloc[-1]
-            profit = (sell_price - avg_price) * contracts * leverage
-            trades.append({'type': 'sell', 'price': sell_price, 'timestamp': data.index[-1], 'contracts': contracts, 'profit': profit})
-            trade_open = False
-            sell_message = f"Пара: {symbol}\nТаймфрейм: {timeframe}m\nСигнал: short\nПлечо: {leverage}x\nПрофит: {profit:.2f} USDT"
-            send_telegram_message(bot_token, chat_id, sell_message)
-            print(f"Сигнал на продажу: {data.index[-1]} Цена: {data['Close'].iloc[-1]} Контракты: {contracts} Профит: {profit:.2f}")
-            can_sell_signal = False
-            buy_signal_count = 0
-            stop_loss_count = 0  # Сброс счётчика стоп-лоссов после успешной продажи
-            contracts = 0  # Сброс контрактов после успешной продажи
-            averaging_count = 0  # Сброс счётчика усреднений после успешной продажи
-            total_averages = 0  # Сброс общего количества усреднений после успешной продажи
+        if not trade_open:
+            if data['buySignal'].iloc[-1]:
+                buy_signal_count += 1
+                last_buy_price = data['Close'].iloc[-1]
+                can_sell_signal = True
+                trade_open = True
+                contracts = (initial_investment * leverage) / last_buy_price  # Вычисление количества контрактов
+                avg_price = last_buy_price
+                trades.append({'Type': 'BUY', 'Price': last_buy_price, 'Time': data.index[-1], 'Contracts': contracts, 'Investment': initial_investment * leverage})
 
-        # Проверка условия стоп-лосса
-        if trade_open and (data['Close'].iloc[-1] < last_buy_price * (1 - price_drop_threshold)):
-            stop_loss_price = data['Close'].iloc[-1]
-            loss = (stop_loss_price - avg_price) * contracts * leverage
-            trades.append({'type': 'stop_loss', 'price': stop_loss_price, 'timestamp': data.index[-1], 'contracts': contracts, 'loss': loss})
-            stop_loss_message = f"Пара: {symbol}\nТаймфрейм: {timeframe}m\nСигнал: стоп-лосс\nПлечо: {leverage}x\nУбыток: {loss:.2f} USDT"
-            send_telegram_message(bot_token, chat_id, stop_loss_message)
-            print(f"Стоп-лосс: {data.index[-1]} Цена: {data['Close'].iloc[-1]} Контракты: {contracts} Убыток: {loss:.2f}")
-            stop_loss_count += 1
-            trade_open = False
-            buy_signal_count = 0
-            can_sell_signal = False
-            contracts = 0
-            averaging_count = 0  # Сброс счётчика усреднений после стоп-лосса
-            total_averages = 0  # Сброс общего количества усреднений после стоп-лосса
+                message = f"Сигнал на покупку на уровне {last_buy_price:.2f}"
+                send_telegram_message(bot_token, chat_id, message)
 
-        # Проверка условия усреднения
-        if trade_open and (data['Close'].iloc[-1] < avg_price * (1 - averaging_drop)):
-            average_price = data['Close'].iloc[-1]
-            contracts += initial_investment / average_price  # Добавляем контрактов на 1 доллар
-            avg_price = ((avg_price * total_averages) + average_price) / (total_averages + 1)  # Пересчёт средней цены
-            total_averages += 1
-            averaging_count += 1
-            averaging_message = f"Пара: {symbol}\nТаймфрейм: {timeframe}m\nСигнал: усреднение\nЦена: {average_price:.2f} USDT\nСредняя цена: {avg_price:.2f} USDT\nКонтракты: {contracts}"
-            send_telegram_message(bot_token, chat_id, averaging_message)
-            print(f"Усреднение: {data.index[-1]} Цена: {data['Close'].iloc[-1]} Новая средняя цена: {avg_price:.2f} Контракты: {contracts}")
+        if trade_open:
+            if can_sell_signal and data['sellSignal'].iloc[-1]:
+                sell_price = data['Close'].iloc[-1]
+                pnl = (sell_price - last_buy_price) * contracts
+                message = f"Сигнал на продажу на уровне {sell_price:.2f}\nPNL: {pnl:.2f}"
+                send_telegram_message(bot_token, chat_id, message)
+                trades.append({'Type': 'SELL', 'Price': sell_price, 'Time': data.index[-1], 'PNL': pnl, 'Contracts': contracts})
+                trade_open = False
+                contracts = 0  # Обнуление количества контрактов после закрытия сделки
+                avg_price = 0
+                total_averages += averaging_count  # Увеличение общего количества усреднений на значение текущего счётчика
+                averaging_count = 0  # Сброс счётчика усреднений
 
-        # Сон перед следующей проверкой (например, 5 минут)
-        time.sleep(300)
+            if data['Close'].iloc[-1] < last_buy_price * (1 - price_drop_threshold):
+                sell_price = data['Close'].iloc[-1]
+                pnl = (sell_price - last_buy_price) * contracts
+                message = f"Цена упала на 15% от уровня покупки {last_buy_price:.2f}. Срабатывание стоп-лосса на уровне {sell_price:.2f}\nPNL: {pnl:.2f}"
+                send_telegram_message(bot_token, chat_id, message)
+                trades.append({'Type': 'STOP LOSS', 'Price': sell_price, 'Time': data.index[-1], 'PNL': pnl, 'Contracts': contracts})
+                trade_open = False
+                contracts = 0  # Обнуление количества контрактов после стоп-лосса
+                avg_price = 0
+                total_averages += averaging_count  # Увеличение общего количества усреднений на значение текущего счётчика
+                averaging_count = 0  # Сброс счётчика усреднений
+                stop_loss_count += 1
 
+            if data['Close'].iloc[-1] < last_buy_price * (1 - averaging_drop):
+                averaging_price = data['Close'].iloc[-1]
+                buy_signal_count += 1
+                contracts += (initial_investment * leverage) / averaging_price  # Увеличение количества контрактов
+                avg_price = (avg_price * averaging_count + averaging_price) / (averaging_count + 1)  # Пересчёт средней цены
+                averaging_count += 1
+                message = f"Сигнал на усреднение на уровне {averaging_price:.2f}"
+                send_telegram_message(bot_token, chat_id, message)
+                trades.append({'Type': 'AVERAGE', 'Price': averaging_price, 'Time': data.index[-1], 'Contracts': contracts})
+
+    # Задержка между запросами (например, 1 минута)
+    time.sleep(300)
